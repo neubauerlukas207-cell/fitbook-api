@@ -41,7 +41,8 @@ jobs:
       - name: Smoke test
         run: |
           set -e
-          LESSON=$(curl -sf localhost:8080/api/lessons | jq '.[0].id')
+          # poslední lekce v týdnu – určitě ještě nezačala
+          LESSON=$(curl -sf localhost:8080/api/lessons | jq 'last | .id')
           echo "Lekce: $LESSON"
           curl -sf localhost:8080/api/lessons/$LESSON | jq .
           curl -sf localhost:8080/api/lessons/$LESSON/forecast | jq -e '.predictedOccupancy >= 0'
