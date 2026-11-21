@@ -1,0 +1,33 @@
+# Celý FitBook backend jedním příkazem:  docker compose up --build
+#   API (Java)        http://localhost:8080/swagger-ui.html
+#   Insights (Python) http://localhost:8000/docs
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: fitbook
+      POSTGRES_USER: fitbook
+      POSTGRES_PASSWORD: fitbook   # jen pro lokální vývoj
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fitbook"]
+      interval: 3s
+      retries: 20
+
+  insights:
+    image: ghcr.io/neubauerlukas207-cell/fitbook-insights:latest
+    ports:
+      - "8000:8000"
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: postgres
+      DATABASE_URL: jdbc:postgresql://db:5432/fitbook
+      DATABASE_USER: fitbook
+      DATABASE_PASSWORD: fitbook
+      FITBOOK_INSIGHTS_URL: http://insights:8000
+    ports:
+      - "8080:8080"

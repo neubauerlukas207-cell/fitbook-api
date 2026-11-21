@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+      - name: Testy a build
+        run: ./mvnw -B verify
+
+  # Spustí celý systém (PostgreSQL + Java API + Python ML služba) a ověří ho přes HTTP
+  e2e:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: docker compose up
+        run: docker compose up -d --build --wait --wait-timeout 300 db insights && docker compose up -d --build api
+      - name: Čekání na API
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf localhost:8080/actuator/health && exit 0
+            sleep 3
+          done
+          docker compose logs api; exit 1
+      - name: Smoke test
+        run: |
+          set -e
+          LESSON=$(curl -sf localhost:8080/api/lessons | jq '.[0].id')
+          echo "Lekce: $LESSON"
+          curl -sf localhost:8080/api/lessons/$LESSON | jq .
+          curl -sf localhost:8080/api/lessons/$LESSON/forecast | jq -e '.predictedOccupancy >= 0'
+          MEMBER=$(curl -sf -X POST localhost:8080/api/members -H 'Content-Type: application/json' \
+            -d '{"name":"CI","email":"ci@example.com"}' | jq '.id')
+          curl -sf -X POST localhost:8080/api/reservations -H 'Content-Type: application/json' \
+            -d "{\"memberId\":$MEMBER,\"lessonId\":$LESSON}" | jq -e '.status == "ACTIVE"'
+      - name: Úklid
+        if: always()
+        run: docker compose down -v
+
+  docker:
+    needs: e2e
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
